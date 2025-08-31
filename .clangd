@@ -10,3 +10,4 @@ CompileFlags:
     - -Ideps/sokol/util
     - -Ideps/fontstash/src
     - -Ideps/blibs
+    - -Ideps/expr

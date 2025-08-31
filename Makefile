@@ -31,5 +31,6 @@ sbeat: main.o libs.o
 		-Ideps/sokol \
 		-Ideps/sokol/util \
 		-Ideps/fontstash/src \
+		-Ideps/expr \
 		-o $@ \
 		$^
