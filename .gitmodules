@@ -1,0 +1,9 @@
+[submodule "deps/sokol"]
+	path = deps/sokol
+	url = https://github.com/floooh/sokol.git
+[submodule "deps/fontstash"]
+	path = deps/fontstash
+	url = https://github.com/memononen/fontstash.git
+[submodule "deps/blibs"]
+	path = deps/blibs
+	url = https://github.com/bullno1/libs.git

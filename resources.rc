@@ -1,0 +1,3 @@
+#include <xincbin.h>
+
+XINCBIN(inconsolata_medium_ttf, "Inconsolata-Medium.ttf")
