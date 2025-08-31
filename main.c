@@ -333,6 +333,7 @@ text_edit_insert_char(text_edit_t* text_edit, uint32_t codepoint) {
 
 static void
 text_edit_insert_string(text_edit_t* text_edit, const char* string) {
+	if (string == NULL) { return; }
 	// TODO: this is inefficient
 	for (const char* itr = string; *itr != '\0'; ++itr) {
 		text_edit_insert_char(text_edit, *itr);
