@@ -7,7 +7,11 @@
 #include <sokol_fontstash.h>
 #include <sokol_log.h>
 #include <sokol_audio.h>
+#include <expr.h>
 #include <string.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdatomic.h>
 #include "resources.rc"
 
 #ifndef TEXTEDIT_BUF_SIZE
@@ -21,12 +25,32 @@ typedef struct {
 	int version;
 } text_edit_t;
 
+typedef struct {
+	struct expr* expr;
+	struct expr_var_list vars;
+} formula_t;
+
 static FONScontext* fons = NULL;
 static int text_font = 0;
 static text_edit_t formula_buf = { 0 };
+static int last_formula_version = 0;
+static bool formula_is_valid = true;
+static atomic_uintptr_t incoming_formula_ptr = 0;
+static formula_t submission_buffer[2] = { 0 };
+static uintptr_t outgoing_formula_ptr = (uintptr_t)&submission_buffer[0];
+static bool should_submit_formula = false;
 
 static void
 audio(float* buffer, int num_frames, int num_channels);
+
+static void
+parse_formula(const char* text, int len);
+
+static void
+try_submit_formula(void);
+
+static void
+cleanup_formula(formula_t* formula);
 
 static void
 text_edit_insert_char(text_edit_t* text_edit, uint32_t codepoint);
@@ -79,6 +103,9 @@ cleanup(void) {
 	saudio_shutdown();
 	sgl_shutdown();
 	sg_shutdown();
+
+	cleanup_formula(&submission_buffer[0]);
+	cleanup_formula(&submission_buffer[1]);
 }
 
 static void
@@ -117,10 +144,17 @@ event(const sapp_event* event) {
 			break;
 		default: break;
 	}
+
+	if (last_formula_version != formula_buf.version) {
+		parse_formula(formula_buf.text_buf, formula_buf.text_len);
+		last_formula_version = formula_buf.version;
+	}
 }
 
 static void
-render(void) {
+frame(void) {
+	try_submit_formula();
+
 	sg_begin_pass(&(sg_pass){ .swapchain = sglue_swapchain() });
 	{
 		sgl_defaults();
@@ -133,7 +167,12 @@ render(void) {
 			fonsSetSize(fons, 20);
 			fonsSetFont(fons, text_font);
 			fonsSetAlign(fons, FONS_ALIGN_LEFT | FONS_ALIGN_TOP);
-			fonsSetColor(fons, sfons_rgba(255, 255, 255, 255));
+			fonsSetColor(
+				fons,
+				formula_is_valid
+					? sfons_rgba(0, 255, 0, 255)
+					: sfons_rgba(255, 0, 0, 255)
+			);
 			fonsDrawText(
 				fons,
 				1.f, 0.f,
@@ -156,7 +195,11 @@ render(void) {
 			float cursor_x = formula_buf.cursor_pos < formula_buf.text_len
 				? quad.x0
 				: iter.nextx;
-			sgl_c4b(255, 255, 255, 255);
+			if (formula_is_valid) {
+				sgl_c4b(0, 255, 0, 255);
+			} else {
+				sgl_c4b(255, 0, 0, 255);
+			}
 
 			float line_height;
 			fonsVertMetrics(fons, NULL, NULL, &line_height);
@@ -174,13 +217,82 @@ render(void) {
 }
 
 static void
-audio(float* buffer, int num_frames, int num_channels) {
-	static int t = 0;
-	for (int i = 0; i < num_frames; ++i, ++t) {
-		unsigned char out = (unsigned char)(t*(42&t>>10));
+cleanup_formula(formula_t* formula) {
+	if (formula->expr != NULL) {
+		expr_destroy(formula->expr, &formula->vars);
+		formula->expr = NULL;
+	}
+}
 
-		buffer[i] = (float)out / 255.f - 0.5f;
-		buffer[i] = 0;
+static void
+parse_formula(const char* text, int len) {
+	static struct expr_func custom_funcs[] = {
+		{ 0 },
+	};
+
+	struct expr_var_list vars = { 0 };
+	struct expr* expr = expr_create(text, (size_t)len, &vars, custom_funcs);
+	if ((formula_is_valid = expr != NULL)) {
+		expr_var(&vars, "t", 1);  // Ensure t is always present
+
+		formula_t* outgoing_formula = (void*)outgoing_formula_ptr;
+		cleanup_formula(outgoing_formula);
+		outgoing_formula->expr = expr;
+		outgoing_formula->vars = vars;
+		should_submit_formula = true;
+
+		try_submit_formula();
+	} else {
+		expr_destroy(expr, &vars);
+	}
+}
+
+static void
+try_submit_formula(void) {
+	if (!should_submit_formula) { return; }
+
+	// Attempt to submit the buffer
+	uintptr_t null = 0;
+	bool submitted = atomic_compare_exchange_strong_explicit(
+		&incoming_formula_ptr, &null, outgoing_formula_ptr,
+		memory_order_release, memory_order_relaxed
+	);
+
+	// If successful, swap the buffers
+	if (submitted) {
+		outgoing_formula_ptr = outgoing_formula_ptr == (uintptr_t)&submission_buffer[0]
+			? (uintptr_t)&submission_buffer[1]
+			: (uintptr_t)&submission_buffer[0];
+	}
+
+	should_submit_formula = !submitted;
+}
+
+static void
+audio(float* buffer, int num_frames, int num_channels) {
+	static formula_t formula = { 0 };
+	static int t = 0;
+
+	// Poll for new formula
+	formula_t* new_formula = (void*)atomic_load_explicit(
+		&incoming_formula_ptr, memory_order_acquire
+	);
+	if (new_formula != NULL) {
+		formula = *new_formula;
+		atomic_store_explicit(&incoming_formula_ptr, 0, memory_order_release);
+	}
+
+	// Render audio
+	if (formula.expr != NULL) {
+		struct expr_var* t_var = expr_var(&formula.vars, "t", 1);
+
+		for (int i = 0; i < num_frames; ++i, ++t) {
+			t_var->value = (float)t;
+			unsigned char out = (unsigned char)(int)expr_eval(formula.expr);
+			buffer[i] = (float)out / 255.f * 2.f - 1.f;
+		}
+	} else {
+		memset(buffer, 0, sizeof(float) * num_frames * num_channels);
 	}
 }
 
@@ -246,11 +358,17 @@ text_edit_backspace(text_edit_t* text_edit) {
 
 sapp_desc
 sokol_main(int argc, char* argv[]) {
-	(void)argc; (void)argv;
+	if (argc > 1) {
+		text_edit_insert_string(&formula_buf, argv[1]);
+	} else {
+		text_edit_insert_string(&formula_buf, "t");
+	}
+	parse_formula(formula_buf.text_buf, formula_buf.text_len);
+
 	return (sapp_desc){
 		.init_cb = init,
 		.event_cb = event,
-		.frame_cb = render,
+		.frame_cb = frame,
 		.cleanup_cb = cleanup,
 		.width = 640,
 		.height = 480,

@@ -10,6 +10,7 @@ clean:
 sbeat: main.o libs.o
 	clang \
 		-O3 \
+		-fno-omit-frame-pointer \
 		-fuse-ld=mold \
 		-Wl,--separate-debug-file \
 		${SANITIZE} \
@@ -22,6 +23,7 @@ sbeat: main.o libs.o
 		-c \
 		-g \
 		-O3 \
+		-fno-omit-frame-pointer \
 		${SANITIZE} \
 		-Wall \
 		-Werror \
