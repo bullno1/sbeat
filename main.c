@@ -224,9 +224,21 @@ cleanup_formula(formula_t* formula) {
 	}
 }
 
+static float
+expr_select(struct expr_func* f, vec_expr_t* args, void* c) {
+	if (vec_len(args) != 3) { return 0.f; }
+
+	if (expr_eval(&vec_nth(args, 0)) != 0.f) {
+		return expr_eval(&vec_nth(args, 1));
+	} else {
+		return expr_eval(&vec_nth(args, 2));
+	}
+}
+
 static void
 parse_formula(const char* text, int len) {
 	static struct expr_func custom_funcs[] = {
+		{ .name = "select", .f = expr_select, },
 		{ 0 },
 	};
 
