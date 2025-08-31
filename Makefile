@@ -13,7 +13,7 @@ sbeat: main.o libs.o
 		-fuse-ld=mold \
 		-Wl,--separate-debug-file \
 		${SANITIZE} \
-		-lX11 -lXi -lXcursor -lEGL -lGL \
+		-lX11 -lXi -lXcursor -lEGL -lGL -lasound \
 		$^ \
 		-o $@
 

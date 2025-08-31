@@ -6,18 +6,31 @@
 #include <fontstash.h>
 #include <sokol_fontstash.h>
 #include <sokol_log.h>
+#include <sokol_audio.h>
 #include "resources.rc"
 
 static FONScontext* fons = NULL;
 static int text_font = 0;
 
 static void
+audio(float* buffer, int num_frames, int num_channels);
+
+static void
 init(void) {
 	sg_setup(&(sg_desc){
 		.environment = sglue_environment(),
 		.logger.func = slog_func,
-    });
+	});
 	sgl_setup(&(sgl_desc_t){
+		.logger = {
+			.func = slog_func,
+		},
+	});
+
+	saudio_setup(&(saudio_desc){
+		.sample_rate = 8000,
+		.num_channels = 1,
+		.stream_cb = audio,
 		.logger = {
 			.func = slog_func,
 		},
@@ -34,8 +47,10 @@ init(void) {
 static void
 cleanup(void) {
 	sfons_destroy(fons);
+
+	saudio_shutdown();
 	sgl_shutdown();
-    sg_shutdown();
+	sg_shutdown();
 }
 
 static void
@@ -44,7 +59,7 @@ event(const sapp_event* event) {
 
 static void
 render(void) {
-    sg_begin_pass(&(sg_pass){ .swapchain = sglue_swapchain() });
+	sg_begin_pass(&(sg_pass){ .swapchain = sglue_swapchain() });
 	{
 		sgl_defaults();
 		sgl_viewport(0, 0, sapp_width(), sapp_height(), true);
@@ -63,22 +78,32 @@ render(void) {
 
 		sgl_draw();
 	}
-    sg_end_pass();
-    sg_commit();
+	sg_end_pass();
+	sg_commit();
+}
+
+static void
+audio(float* buffer, int num_frames, int num_channels) {
+	static int t = 0;
+	for (int i = 0; i < num_frames; ++i, ++t) {
+		unsigned char out = (unsigned char)(t*(42&t>>10));
+
+		buffer[i] = (float)out / 255.f - 0.5f;
+	}
 }
 
 sapp_desc
 sokol_main(int argc, char* argv[]) {
-    (void)argc; (void)argv;
-    return (sapp_desc){
-        .init_cb = init,
+	(void)argc; (void)argv;
+	return (sapp_desc){
+		.init_cb = init,
 		.event_cb = event,
-        .frame_cb = render,
-        .cleanup_cb = cleanup,
-        .width = 640,
-        .height = 480,
-        .window_title = "sbeat",
-        .icon.sokol_default = true,
-        .logger.func = slog_func,
-    };
+		.frame_cb = render,
+		.cleanup_cb = cleanup,
+		.width = 640,
+		.height = 480,
+		.window_title = "sbeat",
+		.icon.sokol_default = true,
+		.logger.func = slog_func,
+	};
 }
