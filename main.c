@@ -19,7 +19,7 @@
 #endif
 
 typedef struct {
-	char text_buf[TEXTEDIT_BUF_SIZE];
+	char text_buf[TEXTEDIT_BUF_SIZE + 1];  // +1 for null-terminator
 	int text_len;
 	int cursor_pos;
 	int version;
@@ -138,6 +138,12 @@ event(const sapp_event* event) {
 					break;
 				case SAPP_KEYCODE_BACKSPACE:
 					text_edit_backspace(&formula_buf);
+					break;
+				case SAPP_KEYCODE_C:
+					if (event->modifiers & SAPP_MODIFIER_CTRL) {
+						formula_buf.text_buf[formula_buf.text_len] = '\0';
+						sapp_set_clipboard_string(formula_buf.text_buf);
+					}
 					break;
 				default: break;
 			}
