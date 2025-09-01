@@ -271,7 +271,11 @@ frame(void) {
 
 			sgl_begin_points();
 			sgl_point_size(2.f);
-			sgl_c4b(0, 0, 255, 255);
+			if (desired_play_dir > 0) {
+				sgl_c4b(0, 0, 255, 255);
+			} else {
+				sgl_c4b(0, 255, 255, 255);
+			}
 
 			struct expr_var* t_var = expr_var(&current_formula.vars, "t", 1);
 			double time_diff_s = stm_sec(stm_now()) - stm_sec(last_audio_state.timestamp);
@@ -299,13 +303,24 @@ frame(void) {
 				float amplitude = sqrtf(fft_out[i][0] * fft_out[i][0] + fft_out[i][1] * fft_out[i][1]) / (float)FFT_SIZE;
 
 				float lerp_factor = sqrtf(amplitude);
-				sgl_v2f_c3f(
-					(float)i / ((float)FFT_SIZE / 2.f) * width + 1.f,
-					height - height * amplitude,
 
-					lerp(lerp_factor, 0.f, 1.f),
-					lerp(lerp_factor, 1.f, 0.f),
-					lerp(lerp_factor, 1.f, 0.f)
+
+				if (desired_play_dir > 0) {
+					sgl_c3f(
+						lerp(lerp_factor, 0.f, 1.f),
+						lerp(lerp_factor, 1.f, 0.f),
+						lerp(lerp_factor, 1.f, 0.f)
+					);
+				} else {
+					sgl_c3f(
+						lerp(lerp_factor, 1.f, 1.f),
+						0.f,
+						lerp(lerp_factor, 1.f, 0.f)
+					);
+				}
+				sgl_v2f(
+					(float)i / ((float)FFT_SIZE / 2.f) * width + 1.f,
+					height - height * amplitude
 				);
 			}
 			sgl_end();
