@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <math.h>
 #include "tribuf.h"
 #include "resources.rc"
 
@@ -338,10 +339,17 @@ expr_select(struct expr_func* f, vec_expr_t* args, void* c) {
 	}
 }
 
+static float
+expr_sin(struct expr_func* f, vec_expr_t* args, void* c) {
+	if (vec_len(args) != 1) { return 0.f; }
+	return sinf(expr_eval(&vec_nth(args, 0)));
+}
+
 static bool
 parse_formula(const char* text, int len, formula_t* out) {
 	static struct expr_func custom_funcs[] = {
 		{ .name = "sel", .f = expr_select, },
+		{ .name = "sin", .f = expr_sin, },
 		{ 0 },
 	};
 
