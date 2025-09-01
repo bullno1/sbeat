@@ -74,6 +74,8 @@ static formula_t current_formula = { 0 };  // Main thread's copy
 static audio_cmd_t audio_cmds[3] = { 0 };
 static tribuf_t audio_cmd_buf;
 static audio_state_t last_audio_state = { 0 };
+static int desired_play_dir = 1;
+static int desired_play_state = 1;
 
 static audio_state_t audio_states[3] = { 0 };
 static tribuf_t audio_state_buf;
@@ -208,6 +210,24 @@ event(const sapp_event* event) {
 						tribuf_end_send(&audio_cmd_buf);
 					}
 					break;
+				case SAPP_KEYCODE_P:
+					if (event->modifiers & SAPP_MODIFIER_CTRL) {
+						audio_cmd_t* audio_cmd = tribuf_begin_send(&audio_cmd_buf);
+						desired_play_state = !desired_play_state;
+						audio_cmd->cmds |= AUDIO_CMD_SET_VELOCITY;
+						audio_cmd->velocity = desired_play_dir * desired_play_state;
+						tribuf_end_send(&audio_cmd_buf);
+					}
+					break;
+				case SAPP_KEYCODE_B:
+					if (event->modifiers & SAPP_MODIFIER_CTRL) {
+						audio_cmd_t* audio_cmd = tribuf_begin_send(&audio_cmd_buf);
+						desired_play_dir = -desired_play_dir;
+						audio_cmd->cmds |= AUDIO_CMD_SET_VELOCITY;
+						audio_cmd->velocity = desired_play_dir * desired_play_state;
+						tribuf_end_send(&audio_cmd_buf);
+					}
+					break;
 				default: break;
 			}
 			break;
@@ -255,7 +275,7 @@ frame(void) {
 
 			struct expr_var* t_var = expr_var(&current_formula.vars, "t", 1);
 			double time_diff_s = stm_sec(stm_now()) - stm_sec(last_audio_state.timestamp);
-			int t = last_audio_state.t + (int)(time_diff_s * (double)SAMPLING_RATE);
+			int t = last_audio_state.t + (int)(time_diff_s * (double)SAMPLING_RATE) * last_audio_state.velocity;
 			float width = sapp_widthf();
 			float height = sapp_heightf();
 			for (float i = 0.f; i < SAMPLING_RATE; i += 1.f) {
@@ -417,12 +437,17 @@ static void
 audio(float* buffer, int num_frames, int num_channels) {
 	static formula_t formula = { 0 };
 	static int t = 0;
+	static int velocity = 1;
 
 	// Receive command
 	audio_cmd_t* audio_cmd = tribuf_begin_recv(&audio_cmd_buf);
 	if (audio_cmd != NULL) {
 		if (audio_cmd->cmds & AUDIO_CMD_RESET_T) {
 			t = 0;
+		}
+
+		if (audio_cmd->cmds & AUDIO_CMD_SET_VELOCITY) {
+			velocity = audio_cmd->velocity;
 		}
 
 		audio_cmd->cmds = 0;
@@ -440,12 +465,13 @@ audio(float* buffer, int num_frames, int num_channels) {
 	audio_state_t* audio_state = tribuf_begin_send(&audio_state_buf);
 	audio_state->t = t;
 	audio_state->timestamp = stm_now();
+	audio_state->velocity = velocity;
 	tribuf_end_send(&audio_state_buf);
 
 	// Render audio
 	if (formula.expr != NULL) {
 		struct expr_var* t_var = expr_var(&formula.vars, "t", 1);
-		for (int i = 0; i < num_frames; ++i, ++t) {
+		for (int i = 0; i < num_frames; ++i, t += velocity) {
 			t_var->value = (float)t;
 			unsigned char out = (unsigned char)(int)expr_eval(formula.expr);
 			buffer[i] = (float)out / 255.f * 2.f - 1.f;
