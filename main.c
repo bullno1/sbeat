@@ -193,7 +193,8 @@ frame(void) {
 			if (audio_state_ptr != NULL) { audio_state = *audio_state_ptr; }
 			tribuf_end_recv(&audio_state_buf);
 
-			sgl_begin_line_strip();
+			sgl_begin_points();
+			sgl_point_size(2.f);
 			sgl_c4b(0, 0, 255, 255);
 
 			struct expr_var* t_var = expr_var(&current_formula.vars, "t", 1);
@@ -201,8 +202,8 @@ frame(void) {
 			int t = audio_state.t + (int)(time_diff_s * (double)SAMPLING_RATE);
 			float width = sapp_widthf();
 			float height = sapp_heightf();
-			for (int i = 0; i < SAMPLING_RATE; ++i) {
-				t_var->value = (float)(t + i);
+			for (float i = 0.f; i < SAMPLING_RATE; i += 1.f) {
+				t_var->value = (float)t + i;
 				unsigned char out = (unsigned char)(int)expr_eval(current_formula.expr);
 
 				sgl_v2f((float)i / (float)SAMPLING_RATE * width, height - height * (float)out / 255.f);
