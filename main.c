@@ -191,11 +191,21 @@ event(const sapp_event* event) {
 	}
 }
 
+static float
+lerp(float x, float from, float to) {
+	return from * (1.f - x) + to * x;
+}
+
 static void
 frame(void) {
 	tribuf_try_swap(&audio_formula_buf);
 
-	sg_begin_pass(&(sg_pass){ .swapchain = sglue_swapchain() });
+	sg_begin_pass(&(sg_pass){
+		.swapchain = sglue_swapchain(),
+		.action.colors[0] = {
+			.load_action = SG_LOADACTION_CLEAR,
+		},
+	});
 	{
 		sgl_defaults();
 		sgl_viewport(0, 0, sapp_width(), sapp_height(), true);
@@ -238,10 +248,18 @@ frame(void) {
 			am_fft_1d(fft, fft_in, fft_out);
 
 			sgl_begin_line_strip();
-			sgl_c4b(0, 255, 255, 255);
 			for (int i = 0; i < FFT_SIZE / 2; ++i) {
 				float amplitude = sqrtf(fft_out[i][0] * fft_out[i][0] + fft_out[i][1] * fft_out[i][1]) / (float)FFT_SIZE;
-				sgl_v2f((float)i / ((float)FFT_SIZE / 2.f) * width + 1.f, height - height * amplitude);
+
+				float lerp_factor = sqrtf(amplitude);
+				sgl_v2f_c3f(
+					(float)i / ((float)FFT_SIZE / 2.f) * width + 1.f,
+					height - height * amplitude,
+
+					lerp(lerp_factor, 0.f, 1.f),
+					lerp(lerp_factor, 1.f, 0.f),
+					lerp(lerp_factor, 1.f, 0.f)
+				);
 			}
 			sgl_end();
 		}
