@@ -20,6 +20,7 @@
 #include <sokol_gl.h>
 #include <sokol_fontstash.h>
 #include <sokol_audio.h>
+#include <sokol_time.h>
 
 #define XINCBIN_IMPLEMENTATION
 #include "resources.rc"

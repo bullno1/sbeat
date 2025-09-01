@@ -7,16 +7,19 @@
 #include <sokol_fontstash.h>
 #include <sokol_log.h>
 #include <sokol_audio.h>
+#include <sokol_time.h>
 #include <expr.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdatomic.h>
+#include "tribuf.h"
 #include "resources.rc"
 
 #ifndef TEXTEDIT_BUF_SIZE
 #	define TEXTEDIT_BUF_SIZE 1024
 #endif
+
+#define SAMPLING_RATE 8000
 
 typedef struct {
 	char text_buf[TEXTEDIT_BUF_SIZE + 1];  // +1 for null-terminator
@@ -30,24 +33,34 @@ typedef struct {
 	struct expr_var_list vars;
 } formula_t;
 
+typedef struct {
+	int t;
+	uint64_t timestamp;
+} audio_state_t;
+
 static FONScontext* fons = NULL;
 static int text_font = 0;
+
 static text_edit_t formula_buf = { 0 };
 static int last_formula_version = 0;
 static bool formula_is_valid = true;
-static atomic_uintptr_t incoming_formula_ptr = 0;
-static formula_t submission_buffer[2] = { 0 };
-static uintptr_t outgoing_formula_ptr = (uintptr_t)&submission_buffer[0];
-static bool should_submit_formula = false;
+
+static formula_t audio_formulas[3] = { 0 };
+static tribuf_t audio_formula_buf;
+
+static formula_t current_formula = { 0 };  // Main thread copy
+
+static audio_state_t audio_states[3] = { 0 };
+static tribuf_t audio_state_buf;
 
 static void
 audio(float* buffer, int num_frames, int num_channels);
 
 static void
-parse_formula(const char* text, int len);
+process_text_edit(void);
 
-static void
-try_submit_formula(void);
+static bool
+parse_formula(const char* text, int len, formula_t* out);
 
 static void
 cleanup_formula(formula_t* formula);
@@ -69,6 +82,7 @@ text_edit_backspace(text_edit_t* text_edit);
 
 static void
 init(void) {
+	stm_setup();
 	sg_setup(&(sg_desc){
 		.environment = sglue_environment(),
 		.logger.func = slog_func,
@@ -80,7 +94,7 @@ init(void) {
 	});
 
 	saudio_setup(&(saudio_desc){
-		.sample_rate = 8000,
+		.sample_rate = SAMPLING_RATE,
 		.num_channels = 1,
 		.stream_cb = audio,
 		.logger = {
@@ -104,8 +118,9 @@ cleanup(void) {
 	sgl_shutdown();
 	sg_shutdown();
 
-	cleanup_formula(&submission_buffer[0]);
-	cleanup_formula(&submission_buffer[1]);
+	cleanup_formula(&audio_formulas[0]);
+	cleanup_formula(&audio_formulas[1]);
+	cleanup_formula(&current_formula);
 }
 
 static void
@@ -152,20 +167,49 @@ event(const sapp_event* event) {
 	}
 
 	if (last_formula_version != formula_buf.version) {
-		parse_formula(formula_buf.text_buf, formula_buf.text_len);
+		process_text_edit();
 		last_formula_version = formula_buf.version;
 	}
 }
 
 static void
 frame(void) {
-	try_submit_formula();
+	tribuf_try_swap(&audio_formula_buf);
 
 	sg_begin_pass(&(sg_pass){ .swapchain = sglue_swapchain() });
 	{
 		sgl_defaults();
 		sgl_viewport(0, 0, sapp_width(), sapp_height(), true);
 		sgl_ortho(0.f, sapp_widthf(), sapp_heightf(), 0.f, -1.f, 1.f);
+
+		// Visualize output
+		if (current_formula.expr != NULL) {
+			static audio_state_t audio_state = { 0 };
+			if (audio_state.timestamp == 0) {
+				audio_state.timestamp = stm_now();
+			}
+
+			audio_state_t* audio_state_ptr = tribuf_begin_recv(&audio_state_buf);
+			if (audio_state_ptr != NULL) { audio_state = *audio_state_ptr; }
+			tribuf_end_recv(&audio_state_buf);
+
+			sgl_begin_line_strip();
+			sgl_c4b(0, 0, 255, 255);
+
+			struct expr_var* t_var = expr_var(&current_formula.vars, "t", 1);
+			double time_diff_s = stm_sec(stm_now()) - stm_sec(audio_state.timestamp);
+			int t = audio_state.t + (int)(time_diff_s * (double)SAMPLING_RATE);
+			float width = sapp_widthf();
+			float height = sapp_heightf();
+			for (int i = 0; i < SAMPLING_RATE; ++i) {
+				t_var->value = (float)(t + i);
+				unsigned char out = (unsigned char)(int)expr_eval(current_formula.expr);
+
+				sgl_v2f((float)i / (float)SAMPLING_RATE * width, height - height * (float)out / 255.f);
+			}
+
+			sgl_end();
+		}
 
 		fonsPushState(fons);
 		{
@@ -241,8 +285,8 @@ expr_select(struct expr_func* f, vec_expr_t* args, void* c) {
 	}
 }
 
-static void
-parse_formula(const char* text, int len) {
+static bool
+parse_formula(const char* text, int len, formula_t* out) {
 	static struct expr_func custom_funcs[] = {
 		{ .name = "select", .f = expr_select, },
 		{ 0 },
@@ -250,40 +294,36 @@ parse_formula(const char* text, int len) {
 
 	struct expr_var_list vars = { 0 };
 	struct expr* expr = expr_create(text, (size_t)len, &vars, custom_funcs);
-	if ((formula_is_valid = expr != NULL)) {
+	if (expr != NULL) {
 		expr_var(&vars, "t", 1);  // Ensure t is always present
-
-		formula_t* outgoing_formula = (void*)outgoing_formula_ptr;
-		cleanup_formula(outgoing_formula);
-		outgoing_formula->expr = expr;
-		outgoing_formula->vars = vars;
-		should_submit_formula = true;
-
-		try_submit_formula();
+		out->expr = expr;
+		out->vars = vars;
+		return true;
 	} else {
 		expr_destroy(expr, &vars);
+		return false;
 	}
 }
 
 static void
-try_submit_formula(void) {
-	if (!should_submit_formula) { return; }
+process_text_edit(void) {
+	formula_t* formula = tribuf_begin_send(&audio_formula_buf);
+	cleanup_formula(formula);
 
-	// Attempt to submit the buffer
-	uintptr_t null = 0;
-	bool submitted = atomic_compare_exchange_strong_explicit(
-		&incoming_formula_ptr, &null, outgoing_formula_ptr,
-		memory_order_release, memory_order_relaxed
+	formula_is_valid = parse_formula(
+		formula_buf.text_buf, formula_buf.text_len,
+		formula
 	);
+	if (formula_is_valid) {
+		tribuf_end_send(&audio_formula_buf);
 
-	// If successful, swap the buffers
-	if (submitted) {
-		outgoing_formula_ptr = outgoing_formula_ptr == (uintptr_t)&submission_buffer[0]
-			? (uintptr_t)&submission_buffer[1]
-			: (uintptr_t)&submission_buffer[0];
+		// Make a separate copy for main thread to use for visualization
+		cleanup_formula(&current_formula);
+		parse_formula(
+			formula_buf.text_buf, formula_buf.text_len,
+			&current_formula
+		);
 	}
-
-	should_submit_formula = !submitted;
 }
 
 static void
@@ -291,19 +331,20 @@ audio(float* buffer, int num_frames, int num_channels) {
 	static formula_t formula = { 0 };
 	static int t = 0;
 
-	// Poll for new formula
-	formula_t* new_formula = (void*)atomic_load_explicit(
-		&incoming_formula_ptr, memory_order_acquire
-	);
-	if (new_formula != NULL) {
-		formula = *new_formula;
-		atomic_store_explicit(&incoming_formula_ptr, 0, memory_order_release);
-	}
+	// Send state update
+	audio_state_t* audio_state = tribuf_begin_send(&audio_state_buf);
+	audio_state->t = t;
+	audio_state->timestamp = stm_now();
+	tribuf_end_send(&audio_state_buf);
+
+	// Receive new formula
+	formula_t* new_formula = tribuf_begin_recv(&audio_formula_buf);
+	if (new_formula != NULL) { formula = *new_formula; }
+	tribuf_end_recv(&audio_formula_buf);
 
 	// Render audio
 	if (formula.expr != NULL) {
 		struct expr_var* t_var = expr_var(&formula.vars, "t", 1);
-
 		for (int i = 0; i < num_frames; ++i, ++t) {
 			t_var->value = (float)t;
 			unsigned char out = (unsigned char)(int)expr_eval(formula.expr);
@@ -382,7 +423,9 @@ sokol_main(int argc, char* argv[]) {
 	} else {
 		text_edit_insert_string(&formula_buf, "t");
 	}
-	parse_formula(formula_buf.text_buf, formula_buf.text_len);
+	tribuf_init(&audio_formula_buf, &audio_formulas[0], sizeof(audio_formulas[0]));
+	tribuf_init(&audio_state_buf, &audio_states[0], sizeof(audio_states[0]));
+	process_text_edit();
 
 	return (sapp_desc){
 		.init_cb = init,
