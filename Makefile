@@ -14,7 +14,7 @@ sbeat: .build/main.o .build/libs.o
 		-fuse-ld=mold \
 		-Wl,--separate-debug-file \
 		${SANITIZE} \
-		-lX11 -lXi -lXcursor -lEGL -lGL -lasound \
+		-lX11 -lXi -lXcursor -lEGL -lGL -lasound -lm \
 		$^ \
 		-o $@
 
