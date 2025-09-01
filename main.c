@@ -289,7 +289,7 @@ expr_select(struct expr_func* f, vec_expr_t* args, void* c) {
 static bool
 parse_formula(const char* text, int len, formula_t* out) {
 	static struct expr_func custom_funcs[] = {
-		{ .name = "select", .f = expr_select, },
+		{ .name = "sel", .f = expr_select, },
 		{ 0 },
 	};
 
