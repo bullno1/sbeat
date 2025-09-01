@@ -5,9 +5,9 @@ SANITIZE := -fsanitize=address,undefined -fno-sanitize=vptr
 all: sbeat
 
 clean:
-	rm -rf *.dbg *.o sbeat
+	rm -rf .build sbeat *.dbg
 
-sbeat: main.o libs.o
+sbeat: .build/main.o .build/libs.o
 	clang \
 		-O3 \
 		-fno-omit-frame-pointer \
@@ -18,7 +18,8 @@ sbeat: main.o libs.o
 		$^ \
 		-o $@
 
-%.o: %.c
+.build/%.o: %.c
+	mkdir -p $(shell dirname $@)
 	clang \
 		-c \
 		-g \
@@ -34,5 +35,6 @@ sbeat: main.o libs.o
 		-Ideps/sokol/util \
 		-Ideps/fontstash/src \
 		-Ideps/expr \
+		-Ideps/am_fft \
 		-o $@ \
 		$^

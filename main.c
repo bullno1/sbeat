@@ -1,7 +1,6 @@
 #include <sokol_app.h>
 #include <sokol_gfx.h>
 #include <sokol_glue.h>
-#include <fontstash.h>
 #include <sokol_gl.h>
 #include <fontstash.h>
 #include <sokol_fontstash.h>
@@ -9,6 +8,10 @@
 #include <sokol_audio.h>
 #include <sokol_time.h>
 #include <expr.h>
+#ifdef __clang__
+#	pragma clang diagnostic ignored "-Wnewline-eof"
+#endif
+#include <am_fft.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -17,6 +20,10 @@
 
 #ifndef TEXTEDIT_BUF_SIZE
 #	define TEXTEDIT_BUF_SIZE 1024
+#endif
+
+#ifndef FFT_SIZE
+#	define FFT_SIZE 1024
 #endif
 
 #define SAMPLING_RATE 8000
@@ -52,6 +59,10 @@ static formula_t current_formula = { 0 };  // Main thread copy
 
 static audio_state_t audio_states[3] = { 0 };
 static tribuf_t audio_state_buf;
+
+static am_fft_plan_1d_t* fft = NULL;
+static am_fft_complex_t* fft_in = NULL;
+static am_fft_complex_t* fft_out = NULL;
 
 static void
 audio(float* buffer, int num_frames, int num_channels);
@@ -108,10 +119,18 @@ init(void) {
 	});
 	xincbin_data_t font = XINCBIN_GET(inconsolata_medium_ttf);
 	text_font = fonsAddFontMem(fons, "InconsolataMedium", (unsigned char*)font.data, (int)font.size, 0);
+
+	fft = am_fft_plan_1d(AM_FFT_FORWARD, FFT_SIZE);
+	fft_in = malloc(sizeof(am_fft_complex_t) * FFT_SIZE);
+	fft_out = malloc(sizeof(am_fft_complex_t) * FFT_SIZE);
 }
 
 static void
 cleanup(void) {
+	free(fft_in);
+	free(fft_out);
+	am_fft_plan_1d_free(fft);
+
 	sfons_destroy(fons);
 
 	saudio_shutdown();
@@ -207,8 +226,23 @@ frame(void) {
 				unsigned char out = (unsigned char)(int)expr_eval(current_formula.expr);
 
 				sgl_v2f((float)i / (float)SAMPLING_RATE * width, height - height * (float)out / 255.f);
+
+				if (i < (float)FFT_SIZE) {
+					fft_in[(int)i][0] = (float)out / 255.f * 2.f - 1.f;
+					fft_in[(int)i][1] = 0.f;
+				}
 			}
 
+			sgl_end();
+
+			am_fft_1d(fft, fft_in, fft_out);
+
+			sgl_begin_line_strip();
+			sgl_c4b(0, 255, 255, 255);
+			for (int i = 0; i < FFT_SIZE / 2; ++i) {
+				float amplitude = sqrtf(fft_out[i][0] * fft_out[i][0] + fft_out[i][1] * fft_out[i][1]) / (float)FFT_SIZE;
+				sgl_v2f((float)i / ((float)FFT_SIZE / 2.f) * width + 1.f, height - height * amplitude);
+			}
 			sgl_end();
 		}
 

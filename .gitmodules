@@ -10,3 +10,6 @@
 [submodule "deps/expr"]
 	path = deps/expr
 	url = https://github.com/zserge/expr.git
+[submodule "deps/am_fft"]
+	path = deps/am_fft
+	url = https://github.com/ands/am_fft.git

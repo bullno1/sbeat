@@ -24,3 +24,9 @@
 
 #define XINCBIN_IMPLEMENTATION
 #include "resources.rc"
+
+#define AM_FFT_IMPLEMENTATION
+#ifdef __clang__
+#	pragma clang diagnostic ignored "-Wnewline-eof"
+#endif
+#include <am_fft.h>

@@ -11,3 +11,4 @@ CompileFlags:
     - -Ideps/fontstash/src
     - -Ideps/blibs
     - -Ideps/expr
+    - -Ideps/am_fft
