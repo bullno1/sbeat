@@ -42,6 +42,11 @@ typedef struct {
 } formula_t;
 
 typedef struct {
+	bool reset_t;
+	formula_t new_formula;
+} audio_cmd_t;
+
+typedef struct {
 	int t;
 	uint64_t timestamp;
 } audio_state_t;
@@ -53,8 +58,8 @@ static text_edit_t formula_buf = { 0 };
 static int last_formula_version = 0;
 static bool formula_is_valid = true;
 
-static formula_t audio_formulas[3] = { 0 };
-static tribuf_t audio_formula_buf;
+static audio_cmd_t audio_cmds[3] = { 0 };
+static tribuf_t audio_cmd_buf;
 
 static formula_t current_formula = { 0 };  // Main thread copy
 
@@ -138,8 +143,9 @@ cleanup(void) {
 	sgl_shutdown();
 	sg_shutdown();
 
-	cleanup_formula(&audio_formulas[0]);
-	cleanup_formula(&audio_formulas[1]);
+	cleanup_formula(&audio_cmds[0].new_formula);
+	cleanup_formula(&audio_cmds[1].new_formula);
+	cleanup_formula(&audio_cmds[2].new_formula);
 	cleanup_formula(&current_formula);
 }
 
@@ -180,6 +186,13 @@ event(const sapp_event* event) {
 						sapp_set_clipboard_string(formula_buf.text_buf);
 					}
 					break;
+				case SAPP_KEYCODE_R:
+					if (event->modifiers & SAPP_MODIFIER_CTRL) {
+						audio_cmd_t* audio_cmd = tribuf_begin_send(&audio_cmd_buf);
+						audio_cmd->reset_t = true;
+						tribuf_end_send(&audio_cmd_buf);
+					}
+					break;
 				default: break;
 			}
 			break;
@@ -199,7 +212,7 @@ lerp(float x, float from, float to) {
 
 static void
 frame(void) {
-	tribuf_try_swap(&audio_formula_buf);
+	tribuf_try_swap(&audio_cmd_buf);
 
 	sg_begin_pass(&(sg_pass){
 		.swapchain = sglue_swapchain(),
@@ -368,15 +381,15 @@ parse_formula(const char* text, int len, formula_t* out) {
 
 static void
 process_text_edit(void) {
-	formula_t* formula = tribuf_begin_send(&audio_formula_buf);
-	cleanup_formula(formula);
+	audio_cmd_t* audio_cmd = tribuf_begin_send(&audio_cmd_buf);
+	cleanup_formula(&audio_cmd->new_formula);
 
 	formula_is_valid = parse_formula(
 		formula_buf.text_buf, formula_buf.text_len,
-		formula
+		&audio_cmd->new_formula
 	);
 	if (formula_is_valid) {
-		tribuf_end_send(&audio_formula_buf);
+		tribuf_end_send(&audio_cmd_buf);
 
 		// Make a separate copy for main thread to use for visualization
 		cleanup_formula(&current_formula);
@@ -398,10 +411,20 @@ audio(float* buffer, int num_frames, int num_channels) {
 	audio_state->timestamp = stm_now();
 	tribuf_end_send(&audio_state_buf);
 
-	// Receive new formula
-	formula_t* new_formula = tribuf_begin_recv(&audio_formula_buf);
-	if (new_formula != NULL) { formula = *new_formula; }
-	tribuf_end_recv(&audio_formula_buf);
+	// Receive command
+	audio_cmd_t* audio_cmd = tribuf_begin_recv(&audio_cmd_buf);
+	if (audio_cmd != NULL) {
+		if (audio_cmd->reset_t) {
+			t = 0;
+			audio_cmd->reset_t = false;
+		}
+
+		if (audio_cmd->new_formula.expr != NULL) {
+			formula = audio_cmd->new_formula;
+			audio_cmd->new_formula.expr = NULL;
+		}
+	}
+	tribuf_end_recv(&audio_cmd_buf);
 
 	// Render audio
 	if (formula.expr != NULL) {
@@ -484,7 +507,7 @@ sokol_main(int argc, char* argv[]) {
 	} else {
 		text_edit_insert_string(&formula_buf, "t");
 	}
-	tribuf_init(&audio_formula_buf, &audio_formulas[0], sizeof(audio_formulas[0]));
+	tribuf_init(&audio_cmd_buf, &audio_cmds[0], sizeof(audio_cmds[0]));
 	tribuf_init(&audio_state_buf, &audio_states[0], sizeof(audio_states[0]));
 	process_text_edit();
 
