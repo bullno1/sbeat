@@ -263,7 +263,7 @@ frame(void) {
 
 		// Visualize output
 		if (current_formula.expr != NULL) {
-			audio_state_t* audio_state_ptr = tribuf_begin_recv(&audio_state_buf);
+			const audio_state_t* audio_state_ptr = tribuf_begin_recv(&audio_state_buf);
 			if (audio_state_ptr != NULL) {
 				last_audio_state = *audio_state_ptr;
 				tribuf_end_recv(&audio_state_buf);
@@ -406,11 +406,18 @@ expr_sin(struct expr_func* f, vec_expr_t* args, void* c) {
 	return sinf(expr_eval(&vec_nth(args, 0)));
 }
 
+static float
+expr_floor(struct expr_func* f, vec_expr_t* args, void* c) {
+	if (vec_len(args) != 1) { return 0.f; }
+	return floorf(expr_eval(&vec_nth(args, 0)));
+}
+
 static bool
 parse_formula(const char* text, int len, formula_t* out) {
 	static struct expr_func custom_funcs[] = {
 		{ .name = "sel", .f = expr_select, },
 		{ .name = "sin", .f = expr_sin, },
+		{ .name = "floor", .f = expr_floor, },
 		{ 0 },
 	};
 
@@ -470,7 +477,7 @@ audio(float* buffer, int num_frames, int num_channels) {
 	}
 
 	// Receive formula
-	formula_t* new_formula = tribuf_begin_recv(&audio_formula_buf);
+	const formula_t* new_formula = tribuf_begin_recv(&audio_formula_buf);
 	if (new_formula != NULL) {
 		formula = *new_formula;
 		tribuf_end_recv(&audio_formula_buf);
