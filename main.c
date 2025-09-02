@@ -412,12 +412,28 @@ expr_floor(struct expr_func* f, vec_expr_t* args, void* c) {
 	return floorf(expr_eval(&vec_nth(args, 0)));
 }
 
+static float
+expr_lut(struct expr_func* f, vec_expr_t* args, void* c) {
+	if (vec_len(args) < 2) { return 0.f; }
+	int length = vec_len(args) - 1;
+
+	float findex = expr_eval(&vec_nth(args, 0));
+	if (isnan(findex)) { return 0.f; }
+
+	int iindex = (int)findex;
+    int windex = iindex % length;
+	if (windex < 0) { windex += length; }
+
+	return expr_eval(&vec_nth(args, windex + 1));
+}
+
 static bool
 parse_formula(const char* text, int len, formula_t* out) {
 	static struct expr_func custom_funcs[] = {
 		{ .name = "sel", .f = expr_select, },
 		{ .name = "sin", .f = expr_sin, },
 		{ .name = "floor", .f = expr_floor, },
+		{ .name = "lut", .f = expr_lut, },
 		{ 0 },
 	};
 
